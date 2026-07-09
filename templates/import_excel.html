@@ -6,6 +6,12 @@
 <body>
     <h2>Import Drains from Excel</h2>
     
+    {% if session.role == 'admin' %}
+        <p><b>Admin:</b> You can import drains for any ward. New ward logins will be created.</p>
+    {% else %}
+        <p><b>Ward {{ session.ward }}:</b> You can only import drains for your ward.</p>
+    {% endif %}
+    
     {% with messages = get_flashed_messages() %}
       {% if messages %}
         {% for message in messages %}
@@ -15,7 +21,7 @@
     {% endwith %}
 
     <form method="POST" enctype="multipart/form-data">
-        <label>Select .xlsx file:</label><br>
+        <label>Select.xlsx file:</label><br>
         <input type="file" name="file" accept=".xlsx" required><br><br>
         <input type="submit" value="Upload">
     </form>
