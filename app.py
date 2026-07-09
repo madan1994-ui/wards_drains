@@ -60,12 +60,12 @@ def init_db():
             INSERT INTO users (username, password_hash, role, ward)
             VALUES (%s, %s, %s, %s)
             ON CONFLICT (username) DO NOTHING
-        """, ('admin', generate_password_hash('Tanuku@2026'), 'admin', None))
+        """, ('admin', generate_password_hash('Tanuku@2026'), 'tanuku', None))
 
         ward_users = [
-            ('ward11', 'Ward11@2026', '11'),
-            ('ward12', 'Ward12@2026', '12'),
-            ('ward29', 'Ward29@2026', '29')
+            ('sanitation11', 'Sanitation11@2026', '11'),
+            ('sanitation12', 'Sanitation12@2026', '12'),
+            ('sanitation29', 'Sanitation29@2026', '29')
         ]
 
         for username, password, ward in ward_users:
