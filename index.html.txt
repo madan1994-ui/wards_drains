@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Anti-Larva Spraying Work Tracker</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+    :root {
+        --primary: #0ea5e9;
+        --primary-dark: #0284c7;
+        --success: #10b981;
+        --danger: #ef4444;
+        --warning: #f59e0b;
+    }
+    * { box-sizing: border-box; }
+    body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+    .glass {
+        background: rgba(255, 255, 255, 0.8);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+    }
+    .animate-in {
+        animation: fadeIn 0.3s ease-out;
+    }
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    .loader {
+        border: 3px solid #f3f3f3;
+        border-top: 3px solid var(--primary);
+        border-radius: 50%;
+        width: 24px;
+        height: 24px;
+        animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+    #video { transform: scaleX(-1); }
+    .toast {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 9999;
+        animation: slideIn 0.3s ease-out;
+    }
+    @keyframes slideIn {
+        from { transform: translateX(400px); opacity: 0; }
+        to { transform: translateX(0); opacity: 1; }
+    }
+    @media (max-width: 390px) {
+        .mobile-stack { flex-direction: column !important; }
+        .mobile-full { width: 100% !important; }
+        .mobile-text-sm { font-size: 0.875rem !important; }
+        .mobile-hide { display: none !important; }
+    }
+</style>
+</head>
+<body class="bg-gradient-to-br from-sky-50 via-blue-50 to-indigo-50 min-h-screen">
+<div id="app"></div>
+<div id="toastContainer"></div>
+
+<script>
+const APP_CONFIG = {
+    PURGE_DAYS: 15,
+    DEFAULT_PASSWORD: "ward@2024",
+    ADMIN_USER: "admin",
+    ADMIN_PASS: "admin@2024"
+};
+
+// Sample drain data: 34 wards, 3-5 drains each
+const DRAIN_DATA = [];
+for (let w = 1; w <= 34; w++) {
+    const drainCount = 3 + (w % 3);
+    for (let d = 1; d <= drainCount; d++) {
+        DRAIN_DATA.push({
+            drain_id: `W${w.toString().padStart(2, '0')}_D${d}`,
+            ward_no: w,
+            location: `Ward ${w} - ${['Main Road', 'Market Street', 'Temple Road', 'School Lane', 'Park Avenue'][d - 1] || 'Cross Street ' + d}`
+        });
+    }
+}
+
+class AntiLarvaTracker {
+    constructor() {
+        this.currentUser = null;
+        this.currentStream = null;
+        this.currentGPS = null;
+        this.watchId = null;
+        this.charts = {};
+        this.init();
+    }
+
+    init() {
+        this.purgeOldEntries();
+        this.initializeDemoUsers();
+        this.checkAuth();
+    }
+
+    initializeDemoUsers() {
+        if (!localStorage.getItem('users_initialized')) {
+            const users = {};
+            for (let i = 1; i <= 34; i++) {
+                users[`ward${i}`] = { password: APP_CONFIG.DEFAULT_PASSWORD, ward_no: i, role: 'ward' };
+            }
+            users[APP_CONFIG.ADMIN_USER] = { password: APP_CONFIG.ADMIN_PASS, role: 'admin' };
+            localStorage.setItem('users', JSON.stringify(users));
+            localStorage.setItem('users_initialized', 'true');
+        }
+    }
+
+    purgeOldEntries() {
+        const entries = this.getEntries();
+        const cutoff = Date.now() - (APP_CONFIG.PURGE_DAYS * 24 * 60 * 60 * 1000);
+        const filtered = entries.filter(e => new Date(e.timestamp).getTime() > cutoff);
+        if (filtered.length !== entries.length) {
+            localStorage.setItem('spray_entries', JSON.stringify(filtered));
+        }
+    }
+
+    checkAuth() {
+        const session = localStorage.getItem('current_session');
+        if (session) {
+            this.currentUser = JSON.parse(session);
+            this.currentUser.role === 'admin' ? this.renderAdminDashboard() : this.renderWardDashboard();
+        } else {
+            this.renderLogin();
+        }
+    }
+
+    login(username, password) {
+        const users = JSON.parse(localStorage.getItem('users') || '{}');
+        const user = users[username];
+        if (user && user.password === password) {
+            this.currentUser = { username, ...user };
+            localStorage.setItem('current_session', JSON.stringify(this.currentUser));
+            this.showToast('Login successful', 'success');
+            user.role === 'admin' ? this.renderAdminDashboard() : this.renderWardDashboard();
+            return true;
+        }
+        this.showToast('Invalid credentials', 'error');
+        return false;
+    }
+
+    logout() {
+        this.stopCamera();
+        this.stopGPSWatch();
+        localStorage.removeItem('current_session');
+        this.currentUser = null;
+        this.renderLogin();
+    }
+
+    getEntries() {
+        return JSON.parse(localStorage.getItem('spray_entries') || '[]');
+    }
+
+    saveEntry(entry) {
+        const entries = this.getEntries();
+        entries.push({
+            id: 'E' + Date.now() + Math.random().toString(36).substr(2, 9),
+            ...entry
+        });
+        localStorage.setItem('spray_entries', JSON.stringify(entries));
+    }
+
+    showToast(message, type = 'info') {
+        const colors = {
+            success: 'bg-emerald-500',
+            error: 'bg-red-500',
+            warning: 'bg-amber-500',
+            info: 'bg-sky-500'
+        };
+        const toast = document.createElement('div');
+        toast.className = `toast ${colors[type]} text-white px-6 py-3 rounded-lg shadow-lg flex items-center gap-3`;
+        toast.innerHTML = `
+            <span>${message}</span>
+            <button onclick="this.parentElement.remove()" class="ml-2 text-white/80 hover:text-white">✕</button>
+        `;
+        document.getElementById('toastContainer').appendChild(toast);
+        setTimeout(() => toast.remove(), 4000);
+    }
+
+    async startCamera() {
+        try {
+            this.stopCamera();
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+            });
+            this.currentStream = stream;
+            const video = document.getElementById('video');
+            if (video) {
+                video.srcObject = stream;
+                document.getElementById('cameraPlaceholder')?.classList.add('hidden');
+                document.getElementById('captureBtn')?.classList.remove('hidden');
+            }
+            return true;
+        } catch (err) {
+            this.showToast('Camera access denied. Please enable camera permissions.', 'error');
+            return false;
+        }
+    }
+
+    stopCamera() {
+        if (this.currentStream) {
+            this.currentStream.getTracks().forEach(track => track.stop());
+            this.currentStream = null;
+        }
+    }
+
+    capturePhoto() {
+        const video = document.getElementById('video');
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0);
+        const photo = canvas.toDataURL('image/jpeg', 0.8);
+        this.stopCamera();
+        return photo;
+    }
+
+    startGPSWatch() {
+        if (!navigator.geolocation) {
+            this.showToast('GPS not supported on this device', 'error');
+            return;
+        }
+        document.getElementById('gpsStatus').innerHTML = '<div class="loader"></div><span class="ml-2">Acquiring GPS...</span>';
+        this.watchId = navigator.geolocation.watchPosition(
+            (pos) => {
+                this.currentGPS = {
+                    lat: pos.coords.latitude,
+                    lng: pos.coords.longitude,
+                    accuracy: pos.coords.accuracy,
+                    timestamp: pos.timestamp
+                };
+                this.updateGPSDisplay();
+            },
+            (err) => {
+                document.getElementById('gpsStatus').innerHTML = `
+                    <div class="flex items-center text-red-600">
+                        <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/></svg>
+                        <span>GPS Error: ${err.message}</span>
+                    </div>
+                `;
+                document.getElementById('submitBtn').disabled = true;
+            },
+            { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+        );
+    }
+
+    stopGPSWatch() {
+        if (this.watchId) {
+            navigator.geolocation.clearWatch(this.watchId);
+            this.watchId = null;
+        }
+    }
+
+    updateGPSDisplay() {
+        if (!this.currentGPS) return;
+        const accuracyColor = this.currentGPS.accuracy < 20 ? 'text-green-600' : 
+                             this.currentGPS.accuracy < 50 ? 'text-amber-600' : 'text-red-600';
+        document.getElementById('gpsStatus').innerHTML = `
+            <div class="space-y-2">
+                <div class="flex items-center text-green-600">
+                    <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd"/></svg>
+                    <span class="font-medium">GPS Active</span>
+                </div>
+                <div class="text-sm text-gray-600 space-y-1">
+                    <div>Lat: ${this.currentGPS.lat.toFixed(6)}</div>
+                    <div>Lng: ${this.currentGPS.lng.toFixed(6)}</div>
+                    <div class="${accuracyColor}">Accuracy: ±${Math.round(this.currentGPS.accuracy)}m</div>
+                </div>
+            </div>
+        `;
+        document.getElementById('submitBtn').disabled = false;
+    }
+
+    renderLogin() {
+        document.getElementById('app').innerHTML = `
+            <div class="min-h-screen flex items-center justify-center p-4">
+                <div class="w-full max-w-md animate-in">
+                    <div class="glass rounded-2xl shadow-2xl p-8 border border-white/20">
+                        <div class="text-center mb-8">
+                            <div class="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-sky-500 to-blue-600 rounded-2xl mb-4 shadow-lg">
+                                <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                            </div>
+                            <h1 class="text-2xl font-bold text-gray-900 mb-2">Anti-Larva Tracker</h1>
+                            <p class="text-gray-600 text-sm">Spray Work Monitoring System</p>
+                        </div>
+                        
+                        <form id="loginForm" class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Username</label>
+                                <input type="text" id="username" required class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-sky-500 focus:border-transparent transition" placeholder="ward1 or admin">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Password</label>
+                                <input type="password" id="password" required class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-sky-500 focus:border-transparent transition" placeholder="Enter password">
+                            </div>
+                            <button type="submit" class="w-full bg-gradient-to-r from-sky-500 to-blue-600 text-white font-semibold py-3 rounded-lg hover:from-sky-600 hover:to-blue-700 transition shadow-lg hover:shadow-xl">
+                                Sign In
+                            </button>
+                        </form>
+
+                        <div class="mt-6 pt-6 border-t border-gray-200">
+                            <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
+                                <strong>Demo Credentials:</strong><br>
+                                Ward: ward1 to ward34 / Password: ward@2024<br>
+                                Admin: admin / Password: admin@2024
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="text-center mt-6 text-xs text-gray-500">
+                        <p>⚠️ Demo Version - Data stored in localStorage</p>
+                        <p class="mt-1">For production, integrate Firebase/Supabase + authentication</p>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        document.getElementById('loginForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value;
+            this.login(username, password);
+        });
+    }
+
+    renderWardDashboard() {
+        const wardNo = this.currentUser.ward_no;
+        const wardDrains = DRAIN_DATA.filter(d => d.ward_no === wardNo);
+        const myEntries = this.getEntries().filter(e => e.ward_no === wardNo);
+
+        document.getElementById('app').innerHTML = `
+            <div class="min-h-screen pb-20">
+                <header class="glass sticky top-0 z-50 border-b border-white/20 shadow-sm">
+                    <div class="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+                        <div>
+                            <h1 class="text-xl font-bold text-gray-900">Ward ${wardNo} Dashboard</h1>
+                            <p class="text-xs text-gray-600">${this.currentUser.username}</p>
+                        </div>
+                        <button onclick="app.logout()" class="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg text-sm font-medium transition">
+                            Logout
+                        </button>
+                    </div>
+                </header>
+
+                <main class="max-w-7xl mx-auto px-4 py-6 space-y-6">
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div class="glass rounded-xl p-4 border border-white/20">
+                            <div class="text-sm text-gray-600">Total Drains</div>
+                            <div class="text-2xl font-bold text-gray-900 mt-1">${wardDrains.length}</div>
+                        </div>
+                        <div class="glass rounded-xl p-4 border border-white/20">
+                            <div class="text-sm text-gray-600">Sprayed (15d)</div>
+                            <div class="text-2xl font-bold text-emerald-600 mt-1">${myEntries.length}</div>
+                        </div>
+                        <div class="glass rounded-xl p-4 border border-white/20">
+                            <div class="text-sm text-gray-600">Completion</div>
+                            <div class="text-2xl font-bold text-sky-600 mt-1">${wardDrains.length > 0 ? Math.round((myEntries.length / wardDrains.length) * 100) : 0}%</div>
+                        </div>
+                        <div class="glass rounded-xl p-4 border border-white/20">
+                            <div class="text-sm text-gray-600">Pending</div>
+                            <div class="text-2xl font-bold text-amber-600 mt-1">${wardDrains.length - myEntries.length}</div>
+                        </div>
+                    </div>
+
+                    <div class="glass rounded-2xl shadow-xl border border-white/20 overflow-hidden">
+                        <div class="bg-gradient-to-r from-sky-500 to-blue-600 px-6 py-4">
+                            <h2 class="text-lg font-semibold text-white">New Spray Entry</h2>
+                        </div>
+                        <div class="p-6 space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Select Drain</label>
+                                <select id="drainSelect" class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-sky-500 focus:border-transparent">
+                                    <option value="">Choose a drain...</option>
+                                    ${wardDrains.map(d => `<option value="${d.drain_id}">${d.location} (${d.drain_id})</option>`).join('')}
+                                </select>
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Live Photo Capture</label>
+                                <div class="relative bg-gray-900 rounded-lg overflow-hidden" style="aspect-ratio: 16/9;">
+                                    <video id="video" autoplay playsinline class="w-full h-full object-cover hidden"></video>
+                                    <canvas id="photoPreview" class="w-full h-full object-cover hidden"></canvas>
+                                    <div id="cameraPlaceholder" class="absolute inset-0 flex items-center justify-center text-gray-400">
+                                        <div class="text-center">
+                                            <svg class="w-16 h-16 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                                            <p class="text-sm">Click Start Camera to capture</p>
+                                        </div>
+                                    </div>
+                                <div class="mt-3 flex gap-2">
+                                    <button id="startCameraBtn" onclick="app.handleStartCamera()" class="flex-1 bg-sky-500 hover:bg-sky-600 text-white py-2 rounded-lg font-medium transition">
+                                        Start Camera
+                                    </button>
+                                    <button id="captureBtn" onclick="app.handleCapture()" class="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white py-2 rounded-lg font-medium transition hidden">
+                                        Capture Photo
+                                    </button>
+                                    <button id="retakeBtn" onclick="app.handleRetake()" class="flex-1 bg-amber-500 hover:bg-amber-600 text-white py-2 rounded-lg font-medium transition hidden">
+                                        Retake
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div id="gpsStatus" class="bg-gray-50 rounded-lg p-4 text-sm">
+                                <div class="flex items-center text-gray-500">
+                                    <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd"/></svg>
+                                    <span>GPS will activate when camera starts</span>
+                                </div>
+                            </div>
+
+                            <button id="submitBtn" onclick="app.handleSubmit()" disabled class="w-full bg-gradient-to-r from-emerald-500 to-green-600 text-white font-semibold py-3 rounded-lg hover:from-emerald-600 hover:to-green-700 transition shadow-lg disabled:opacity-50 disabled:cursor-not-allowed">
+                                Submit Spray Entry
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="glass rounded-2xl shadow-xl border border-white/20 overflow-hidden">
+                        <div class="bg-gradient-to-r from-indigo-500 to-purple-600 px-6 py-4">
+                            <h2 class="text-lg font-semibold text-white">Recent Entries (Last 15 Days)</h2>
+                        </div>
+                        <div class="p-6">
+                            ${myEntries.length === 0 ? `
+                                <div class="text-center py-8 text-gray-500">
+                                    <svg class="w-16 h-16 mx-auto mb-3 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                                    <p>No entries yet. Submit your first spray work!</p>
+                                </div>
+                            ` : `
+                                <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                                    ${myEntries.reverse().map(entry => `
+                                        <div class="border border-gray-200 rounded-lg overflow-hidden hover:shadow-lg transition">
+                                            <img src="${entry.photo_base64}" alt="Spray photo" class="w-full h-40 object-cover">
+                                            <div class="p-3 space-y-2">
+                                                <div class="font-semibold text-sm text-gray-900">${entry.location_name}</div>
+                                                <div class="text-xs text-gray-600">ID: ${entry.drain_id}</div>
+                                                <div class="text-xs text-gray-500 flex items-center">
+                                                    <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clip-rule="evenodd"/></svg>
+                                                    ${new Date(entry.timestamp).toLocaleString('en-IN')}
+                                                </div>
+                                                <div class="text-xs text-gray-500">
+                                                    GPS: ${entry.gps_lat.toFixed(4)}, ${entry.gps_lng.toFixed(4)}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            `}
+                        </div>
+                    </div>
+                </main>
+            </div>
+        `;
+    }
+
+    handleStartCamera() {
+        this.startCamera().then(success => {
+            if (success) {
+                this.startGPSWatch();
+                document.getElementById('startCameraBtn').classList.add('hidden');
+                document.getElementById('video').classList.remove('hidden');
+            }
+        });
+    }
+
+    handleCapture() {
+        const photo = this.capturePhoto();
+        const canvas = document.getElementById('photoPreview');
+        canvas.classList.remove('hidden');
+        canvas.getContext('2d').drawImage(document.getElementById('video'), 0, 0);
+        document.getElementById('video').classList.add('hidden');
+        document.getElementById('captureBtn').classList.add('hidden');
+        document.getElementById('retakeBtn').classList.remove('hidden');
+        this.capturedPhoto = photo;
+    }
+
+    handleRetake() {
+        this.capturedPhoto = null;
+        document.getElementById('photoPreview').classList.add('hidden');
+        document.getElementById('video').classList.remove('hidden');
+        document.getElementById('captureBtn').classList.remove('hidden');
+        document.getElementById('retakeBtn').classList.add('hidden');
+        this.startCamera();
+    }
+
+    handleSubmit() {
+        const drainId = document.getElementById('drainSelect').value;
+        if (!drainId) {
+            this.showToast('Please select a drain', 'warning');
+            return;
+        }
+        if (!this.capturedPhoto) {
+            this.showToast('Please capture a photo', 'warning');
+            return;
+        }
+        if (!this.currentGPS) {
+            this.showToast('GPS location required', 'warning');
+            return;
+        }
+        if (this.currentGPS.accuracy > 100) {
+            if (!confirm(`GPS accuracy is low (±${Math.round(this.currentGPS.accuracy)}m). Continue anyway?`)) {
+                return;
+            }
+        }
+
+        const drain = DRAIN_DATA.find(d => d.drain_id === drainId);
+        const entry = {
+            ward_no: this.currentUser.ward_no,
+            drain_id: drainId,
+            location_name: drain.location,
+            photo_base64: this.capturedPhoto,
+            gps_lat: this.currentGPS.lat,
+            gps_lng: this.currentGPS.lng,
+            gps_accuracy: this.currentGPS.accuracy,
+            timestamp: new Date().toISOString(),
+            submitted_by: this.currentUser.username
+        };
+
+        this.saveEntry(entry);
+        this.showToast('Spray entry submitted successfully!', 'success');
+        
+        // Reset form
+        document.getElementById('drainSelect').value = '';
+        this.capturedPhoto = null;
+        document.getElementById('photoPreview').classList.add('hidden');
+        document.getElementById('retakeBtn').classList.add('hidden');
+        document.getElementById('startCameraBtn').classList.remove('hidden');
+        document.getElementById('cameraPlaceholder').classList.remove('hidden');
+        this.stopGPSWatch();
+        
+        // Refresh view
+        setTimeout(() => this.renderWardDashboard(), 1000);
+    }
+
+    renderAdminDashboard() {
+        const entries = this.getEntries();
+        const wardStats = this.calculateWardStats(entries);
+        const totalDrains = DRAIN_DATA.length;
+        const totalSprayed = entries.length;
+        const overallCompletion = totalDrains > 0 ? Math.round((totalSprayed / totalDrains) * 100) : 0;
+
+        document.getElementById('app').innerHTML = `
+            <div class="min-h-screen">
+                <header class="glass sticky top-0 z-50 border-b border-white/20 shadow-sm">
+                    <div class="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between mobile-stack gap-3">
+                        <div>
+                            <h1 class="text-xl font-bold text-gray-900">Admin Dashboard</h1>
+                            <p class="text-xs text-gray-600">Anti-Larva Spray Monitoring</p>
+                        </div>
+                        <button onclick="app.logout()" class="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg text-sm font-medium transition mobile-full">
+                            Logout
+                        </button>
+                    </div>
+                </header>
+
+                <main class="max-w-7xl mx-auto px-4 py-6 space-y-6">
+                    <div class="glass rounded-2xl shadow-xl border border-white/20 p-6">
+                        <h2 class="text-lg font-semibold text-gray-900 mb-4">Overall Progress</h2>
+                        <div class="mb-4">
+                            <div class="flex justify-between mb-2 text-sm">
+                                <span class="text-gray-600">Total Completion</span>
+                                <span class="font-semibold text-gray-900">${totalSprayed} / ${totalDrains} drains (${overallCompletion}%)</span>
+                            </div>
+                            <div class="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
+                                <div class="bg-gradient-to-r from-sky-500 to-blue-600 h-full rounded-full transition-all duration-500" style="width: ${overallCompletion}%"></div>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
+                            <div class="text-center">
+                                <div class="text-3xl font-bold text-sky-600">${entries.length}</div>
+                                <div class="text-xs text-gray-600 mt-1">Total Sprays</div>
+                            </div>
+                            <div class="text-center">
+                                <div class="text-3xl font-bold text-emerald-600">${wardStats.filter(w => w.completion === 100).length}</div>
+                                <div class="text-xs text-gray-600 mt-1">Completed Wards</div>
+                            </div>
+                            <div class="text-center">
+                                <div class="text-3xl font-bold text-amber-600">${wardStats.filter(w => w.completion > 0 && w.completion < 100).length}</div>
+                                <div class="text-xs text-gray-600 mt-1">In Progress</div>
+                            </div>
+                            <div class="text-center">
+                                <div class="text-3xl font-bold text-red-600">${wardStats.filter(w => w.completion === 0).length}</div>
+                                <div class="text-xs text-gray-600 mt-1">Not Started</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="glass rounded-2xl shadow-xl border border-white/20 p-6">
+                        <h2 class="text-lg font-semibold text-gray-900 mb-4">Completion by Ward</h2>
+                        <canvas id="wardChart" class="max-h-64"></canvas>
+                    </div>
+
+                    <div class="glass rounded-2xl shadow-xl border border-white/20 overflow-hidden">
+                        <div class="bg-gradient-to-r from-indigo-500 to-purple-600 px-6 py-4 flex items-center justify-between mobile-stack gap-3">
+                            <h2 class="text-lg font-semibold text-white">Ward Statistics</h2>
+                            <div class="flex gap-2 mobile-full">
+                                <select id="wardFilter" onchange="app.filterAdminView()" class="px-3 py-1 rounded-lg text-sm border-0 mobile-full">
+                                    <option value="all">All Wards</option>
+                                    ${Array.from({length: 34}, (_, i) => `<option value="${i+1}">Ward ${i+1}</option>`).join('')}
+                                </select>
+                                <input type="date" id="dateFilter" onchange="app.filterAdminView()" class="px-3 py-1 rounded-lg text-sm border-0 mobile-hide">
+                            </div>
+                        </div>
+                        <div class="p-6">
+                            <div id="wardCards" class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                                ${wardStats.map(stat => `
+                                    <div class="ward-card border border-gray-200 rounded-lg p-4 hover:shadow-lg transition" data-ward="${stat.ward}">
+                                        <div class="flex items-center justify-between mb-3">
+                                            <h3 class="font-semibold text-gray-900">Ward ${stat.ward}</h3>
+                                            <span class="px-2 py-1 rounded-full text-xs font-medium ${stat.completion === 100 ? 'bg-emerald-100 text-emerald-700' : stat.completion > 0 ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-700'}">
+                                                ${stat.completion}%
+                                            </span>
+                                        </div>
+                                        <div class="space-y-2 text-sm">
+                                            <div class="flex justify-between">
+                                                <span class="text-gray-600">Total Drains:</span>
+                                                <span class="font-medium">${stat.totalDrains}</span>
+                                            </div>
+                                            <div class="flex justify-between">
+                                                <span class="text-gray-600">Sprayed:</span>
+                                                <span class="font-medium text-emerald-600">${stat.sprayed}</span>
+                                            </div>
+                                            <div class="flex justify-between">
+                                                <span class="text-gray-600">Pending:</span>
+                                                <span class="font-medium text-amber-600">${stat.pending}</span>
+                                            </div>
+                                        </div>
+                                        <div class="mt-3 w-full bg-gray-200 rounded-full h-2">
+                                            <div class="bg-gradient-to-r from-sky-500 to-blue-600 h-full rounded-full" style="width: ${stat.completion}%"></div>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="glass rounded-2xl shadow-xl border border-white/20 overflow-hidden">
+                        <div class="bg-gradient-to-r from-emerald-500 to-green-600 px-6 py-4">
+                            <h2 class="text-lg font-semibold text-white">Recent Spray Entries</h2>
+                        </div>
+                        <div class="p-6">
+                            <div id="entriesList" class="space-y-3 max-h-96 overflow-y-auto">
+                                ${entries.reverse().slice(0, 50).map(entry => `
+                                    <div class="entry-item border border-gray-200 rounded-lg p-3 hover:bg-gray-50 transition" data-ward="${entry.ward_no}" data-date="${entry.timestamp.split('T')[0]}">
+                                        <div class="flex gap-3 mobile-stack">
+                                            <img src="${entry.photo_base64}" alt="Photo" class="w-20 h-20 rounded-lg object-cover flex-shrink-0 mobile-full">
+                                            <div class="flex-1 min-w-0">
+                                                <div class="flex items-start justify-between gap-2 mb-2">
+                                                    <div>
+                                                        <div class="font-semibold text-gray-900 text-sm">Ward ${entry.ward_no} - ${entry.drain_id}</div>
+                                                        <div class="text-xs text-gray-600">${entry.location_name}</div>
+                                                    </div>
+                                                    <span class="text-xs text-gray-500 whitespace-nowrap">${new Date(entry.timestamp).toLocaleDateString('en-IN')}</span>
+                                                </div>
+                                                <div class="text-xs text-gray-500 space-y-1">
+                                                    <div>GPS: ${entry.gps_lat.toFixed(6)}, ${entry.gps_lng.toFixed(6)} (±${Math.round(entry.gps_accuracy)}m)</div>
+                                                    <div>By: ${entry.submitted_by} at ${new Date(entry.timestamp).toLocaleTimeString('en-IN')}</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                                ${entries.length === 0 ? '<div class="text-center py-8 text-gray-500">No entries yet</div>' : ''}
+                            </div>
+                        </div>
+                    </div>
+                </main>
+            </div>
+        `;
+
+        this.renderWardChart(wardStats);
+    }
+
+    calculateWardStats(entries) {
+        const stats = [];
+        for (let w = 1; w <= 34; w++) {
+            const wardDrains = DRAIN_DATA.filter(d => d.ward_no === w);
+            const wardEntries = entries.filter(e => e.ward_no === w);
+            const sprayed = wardEntries.length;
+            const total = wardDrains.length;
+            stats.push({
+                ward: w,
+                totalDrains: total,
+                sprayed: sprayed,
+                pending: total - sprayed,
+                completion: total > 0 ? Math.round((sprayed / total) * 100) : 0
+            });
+        }
+        return stats;
+    }
+
+    renderWardChart(wardStats) {
+        const ctx = document.getElementById('wardChart');
+        if (!ctx) return;
+        
+        if (this.charts.wardChart) {
+            this.charts.wardChart.destroy();
+        }
+
+        this.charts.wardChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: wardStats.map(s => `W${s.ward}`),
+                datasets: [{
+                    label: 'Completion %',
+                    data: wardStats.map(s => s.completion),
+                    backgroundColor: wardStats.map(s => 
+                        s.completion === 100 ? 'rgba(16, 185, 129, 0.8)' :
+                        s.completion > 50 ? 'rgba(14, 165, 233, 0.8)' :
+                        s.completion > 0 ? 'rgba(245, 158, 11, 0.8)' :
+                        'rgba(156, 163, 175, 0.8)'
+                    ),
+                    borderColor: wardStats.map(s => 
+                        s.completion === 100 ? 'rgb(16, 185, 129)' :
+                        s.completion > 50 ? 'rgb(14, 165, 233)' :
+                        s.completion > 0 ? 'rgb(245, 158, 11)' :
+                        'rgb(156, 163, 175)'
+                    ),
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: (context) => {
+                                const stat = wardStats[context.dataIndex];
+                                return [
+                                    `Completion: ${context.parsed.y}%`,
+                                    `Sprayed: ${stat.sprayed}/${stat.totalDrains}`
+                                ];
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        max: 100,
+                        ticks: { callback: value => value + '%' }
+                    }
+                }
+            }
+        });
+    }
+
+    filterAdminView() {
+        const wardFilter = document.getElementById('wardFilter').value;
+        const dateFilter = document.getElementById('dateFilter').value;
+        
+        document.querySelectorAll('.ward-card').forEach(card => {
+            const showWard = wardFilter === 'all' || card.dataset.ward === wardFilter;
+            card.style.display = showWard ? 'block' : 'none';
+        });
+
+        document.querySelectorAll('.entry-item').forEach(item => {
+            const showWard = wardFilter === 'all' || item.dataset.ward === wardFilter;
+            const showDate = !dateFilter || item.dataset.date === dateFilter;
+            item.style.display = showWard && showDate ? 'block' : 'none';
+        });
+    }
+}
+
+const app = new AntiLarvaTracker();
+</script>
+<script>(function(){document.addEventListener("click",function(e){var a=e.target.closest("[data-product-id]");if(!a)return;e.preventDefault();var pid=a.getAttribute("data-product-id");if(pid)parent.postMessage({type:"ecto-artifact-link-click",productId:pid},"*")})})();</script>
+</body>
+</html>
