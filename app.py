@@ -312,4 +312,10 @@ def fix_database_constraint():
         cur.close()
         conn.close()
         return "✅ SUCCESS: UNIQUE constraint added. Ward import will now work. DELETE this /fix_database_constraint route from app.py NOW and redeploy."
-    except
+    except Exception as e:
+        if "already exists" in str(e):
+            return "✅ Already fixed: Constraint already exists. Ward import should work now. DELETE this route from app.py."
+        return f"Error: {str(e)}"
+
+if __name__ == '__main__':
+    app.run(debug=False)
