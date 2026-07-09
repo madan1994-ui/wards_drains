@@ -254,3 +254,62 @@ def import_excel():
                 conn.close()
                 
                 if user_role == 'admin':
+                    flash(f'Successfully imported {count} drains. Skipped {skipped} rows.')
+                else:
+                    flash(f'Successfully imported {count} drains for Ward {user_ward}. Skipped {skipped} rows.')
+                return redirect('/dashboard')
+                
+            except Exception as e:
+                flash(f'Error importing Excel: {str(e)}')
+                return redirect('/import_excel')
+        else:
+            flash('Please upload a.xlsx file')
+            return redirect('/import_excel')
+
+    return render_template('import_excel.html')
+
+@app.route('/photo_report')
+def photo_report():
+    if 'username' not in session:
+        return redirect('/login')
+
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    if session.get('role') == 'admin':
+        cur.execute("""
+            SELECT * FROM drains
+            WHERE photo_url IS NOT NULL AND photo_url!= ''
+            ORDER BY ward, work_date DESC
+        """)
+    else:
+        cur.execute("""
+            SELECT * FROM drains
+            WHERE ward = %s AND photo_url IS NOT NULL AND photo_url!= ''
+            ORDER BY work_date DESC
+        """, (session.get('ward'),))
+
+    drains = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    return render_template('photo_report.html', drains=drains)
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect('/login')
+
+@app.route('/fix_database_constraint')
+def fix_database_constraint():
+    if session.get('role')!= 'admin':
+        return "Login as admin first"
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("ALTER TABLE drains ADD CONSTRAINT drains_drain_id_ward_key UNIQUE (drain_id, ward);")
+        conn.commit()
+        cur.close()
+        conn.close()
+        return "✅ SUCCESS: UNIQUE constraint added. Ward import will now work. DELETE this /fix_database_constraint route from app.py NOW and redeploy."
+    except
