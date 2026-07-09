@@ -56,14 +56,12 @@ def init_db():
             )
         ''')
 
-        # FIX 1: Changed 'tanuku' to 'admin' for role
         cur.execute("""
             INSERT INTO users (username, password_hash, role, ward)
             VALUES (%s, %s, %s, %s)
             ON CONFLICT (username) DO NOTHING
         """, ('admin', generate_password_hash('Tanuku@2026'), 'admin', None))
 
-        # Using 'sanitation' prefix to match your existing users
         ward_users = [
             ('sanitation11', 'Sanitation11@2026', '11'),
             ('sanitation12', 'Sanitation12@2026', '12'),
@@ -213,96 +211,4 @@ def import_excel():
                 sheet = wb.active
 
                 conn = get_db_connection()
-                cur = conn.cursor()
-
-                count = 0
-                skipped = 0
-                for row in sheet.iter_rows(min_row=2, values_only=True):
-                    drain_id = str(row[2]) if row[2] else ''
-                    ward = str(row[1]) if row[1] else ''
-                    location = str(row[3]) if row[3] else ''
-
-                    if not drain_id or not ward:
-                        skipped += 1
-                        continue
-
-                    # If ward user, only allow their own ward
-                    if user_role!= 'admin' and ward!= user_ward:
-                        skipped += 1
-                        continue
-
-                    cur.execute("""
-                        INSERT INTO drains (drain_id, ward, location, status, updated_by)
-                        VALUES (%s, %s, %s, 'Pending', %s)
-                        ON CONFLICT (drain_id, ward) 
-                        DO UPDATE SET location = EXCLUDED.location, updated_by = EXCLUDED.updated_by, updated_at = CURRENT_TIMESTAMP
-                    """, (drain_id, ward, location, session['username']))
-                    count += 1
-
-                # FIX 2: Use 'sanitation' prefix to match your users
-                if user_role == 'admin':
-                    cur.execute("SELECT DISTINCT ward FROM drains")
-                    all_wards = [row[0] for row in cur.fetchall()]
-                    for ward in all_wards:
-                        if ward:
-                            username = f'sanitation{ward}'
-                            password = f'Sanitation{ward}@2026'
-                            cur.execute("""
-                                INSERT INTO users (username, password_hash, role, ward)
-                                VALUES (%s, %s, %s, %s)
-                                ON CONFLICT (username) DO NOTHING
-                            """, (username, generate_password_hash(password), 'user', ward))
-
-                conn.commit()
-                cur.close()
-                conn.close()
-                
-                if user_role == 'admin':
-                    flash(f'Successfully imported {count} drains. Skipped {skipped} rows.')
-                else:
-                    flash(f'Successfully imported {count} drains for Ward {user_ward}. Skipped {skipped} rows.')
-                return redirect('/dashboard')
-                
-            except Exception as e:
-                flash(f'Error importing Excel: {str(e)}')
-                return redirect('/import_excel')
-        else:
-            flash('Please upload a.xlsx file')
-            return redirect('/import_excel')
-
-    return render_template('import_excel.html')
-
-@app.route('/photo_report')
-def photo_report():
-    if 'username' not in session:
-        return redirect('/login')
-
-    conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
-
-    if session.get('role') == 'admin':
-        cur.execute("""
-            SELECT * FROM drains
-            WHERE photo_url IS NOT NULL AND photo_url!= ''
-            ORDER BY ward, work_date DESC
-        """)
-    else:
-        cur.execute("""
-            SELECT * FROM drains
-            WHERE ward = %s AND photo_url IS NOT NULL AND photo_url!= ''
-            ORDER BY work_date DESC
-        """, (session.get('ward'),))
-
-    drains = cur.fetchall()
-    cur.close()
-    conn.close()
-
-    return render_template('photo_report.html', drains=drains)
-
-@app.route('/logout')
-def logout():
-    session.clear()
-    return redirect('/login')
-
-if __name__ == '__main__':
-    app.run(debug=False)
+                cur = conn.cursor
