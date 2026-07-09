@@ -211,4 +211,46 @@ def import_excel():
                 sheet = wb.active
 
                 conn = get_db_connection()
-                cur = conn.cursor
+                cur = conn.cursor()
+
+                count = 0
+                skipped = 0
+                for row in sheet.iter_rows(min_row=2, values_only=True):
+                    drain_id = str(row[2]) if row[2] else ''
+                    ward = str(row[1]) if row[1] else ''
+                    location = str(row[3]) if row[3] else ''
+
+                    if not drain_id or not ward:
+                        skipped += 1
+                        continue
+
+                    if user_role!= 'admin' and ward!= user_ward:
+                        skipped += 1
+                        continue
+
+                    cur.execute("""
+                        INSERT INTO drains (drain_id, ward, location, status, updated_by)
+                        VALUES (%s, %s, %s, 'Pending', %s)
+                        ON CONFLICT (drain_id, ward) 
+                        DO UPDATE SET location = EXCLUDED.location, updated_by = EXCLUDED.updated_by, updated_at = CURRENT_TIMESTAMP
+                    """, (drain_id, ward, location, session['username']))
+                    count += 1
+
+                if user_role == 'admin':
+                    cur.execute("SELECT DISTINCT ward FROM drains")
+                    all_wards = [row[0] for row in cur.fetchall()]
+                    for ward in all_wards:
+                        if ward:
+                            username = f'sanitation{ward}'
+                            password = f'Sanitation{ward}@2026'
+                            cur.execute("""
+                                INSERT INTO users (username, password_hash, role, ward)
+                                VALUES (%s, %s, %s, %s)
+                                ON CONFLICT (username) DO NOTHING
+                            """, (username, generate_password_hash(password), 'user', ward))
+
+                conn.commit()
+                cur.close()
+                conn.close()
+                
+                if user_role == 'admin':
