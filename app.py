@@ -56,12 +56,14 @@ def init_db():
             )
         ''')
 
+        # FIX 1: Changed 'tanuku' to 'admin' for role
         cur.execute("""
             INSERT INTO users (username, password_hash, role, ward)
             VALUES (%s, %s, %s, %s)
             ON CONFLICT (username) DO NOTHING
-        """, ('admin', generate_password_hash('Tanuku@2026'), 'tanuku', None))
+        """, ('admin', generate_password_hash('Tanuku@2026'), 'admin', None))
 
+        # Using 'sanitation' prefix to match your existing users
         ward_users = [
             ('sanitation11', 'Sanitation11@2026', '11'),
             ('sanitation12', 'Sanitation12@2026', '12'),
@@ -229,7 +231,6 @@ def import_excel():
                         skipped += 1
                         continue
 
-                    # Insert or update drain for this ward
                     cur.execute("""
                         INSERT INTO drains (drain_id, ward, location, status, updated_by)
                         VALUES (%s, %s, %s, 'Pending', %s)
@@ -238,14 +239,14 @@ def import_excel():
                     """, (drain_id, ward, location, session['username']))
                     count += 1
 
-                # Only admin creates new ward users
+                # FIX 2: Use 'sanitation' prefix to match your users
                 if user_role == 'admin':
                     cur.execute("SELECT DISTINCT ward FROM drains")
                     all_wards = [row[0] for row in cur.fetchall()]
                     for ward in all_wards:
                         if ward:
-                            username = f'ward{ward}'
-                            password = f'Ward{ward}@2026'
+                            username = f'sanitation{ward}'
+                            password = f'Sanitation{ward}@2026'
                             cur.execute("""
                                 INSERT INTO users (username, password_hash, role, ward)
                                 VALUES (%s, %s, %s, %s)
