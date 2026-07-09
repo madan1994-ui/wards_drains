@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Import Excel - Tanuku Drains</title>
+</head>
+<body>
+    <h2>Import Drains from Excel</h2>
+    
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+        {% for message in messages %}
+          <p style="color: green;">{{ message }}</p>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    <form method="POST" enctype="multipart/form-data">
+        <label>Select .xlsx file:</label><br>
+        <input type="file" name="file" accept=".xlsx" required><br><br>
+        <input type="submit" value="Upload">
+    </form>
+    
+    <p>Excel format: Row 1 = Header, Row 2+ = Data<br>
+    Column B = Ward, Column C = Drain ID, Column D = Location</p>
+    
+    <br><a href="/dashboard">Back to Dashboard</a>
+</body>
+</html>
