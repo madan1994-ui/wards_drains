@@ -57,7 +57,6 @@ def init_db():
             )
         ''')
 
-        # Add unique constraint if it doesn't exist - fixes the ON CONFLICT error
         cur.execute("""
             DO $$
             BEGIN
@@ -70,7 +69,6 @@ def init_db():
             END $$;
         """)
 
-        # Table for ward work uploads with photos
         cur.execute('''
             CREATE TABLE IF NOT EXISTS drain_work_logs (
                 id SERIAL PRIMARY KEY,
@@ -181,7 +179,6 @@ def upload_work(drain_id):
     if 'username' not in session:
         return redirect('/login')
 
-    # Admin cannot upload work photos
     if session.get('role') == 'admin':
         flash('Admin cannot upload work photos. Only ward users can upload.')
         return redirect('/dashboard')
@@ -204,7 +201,6 @@ def upload_work(drain_id):
         conn.close()
         return redirect('/dashboard')
 
-    # Get work history for this drain
     cur.execute("""
         SELECT * FROM drain_work_logs
         WHERE drain_id = %s
@@ -233,13 +229,11 @@ def upload_work(drain_id):
             conn.close()
             return redirect(url_for('upload_work', drain_id=drain_id))
 
-        # Insert work log
         cur.execute("""
             INSERT INTO drain_work_logs (drain_id, photo_url, work_type, status, remarks, uploaded_by)
             VALUES (%s, %s, %s, %s, %s, %s)
         """, (drain_id, photo_url, work_type, status, remarks, session['username']))
 
-        # Update drain status
         cur.execute("""
             UPDATE drains
             SET status = %s, work_type = %s, work_date = CURRENT_DATE,
@@ -262,7 +256,6 @@ def import_excel():
     if 'username' not in session:
         return redirect('/login')
 
-    # Only admin can upload drain master data
     if session.get('role')!= 'admin':
         flash('Only admin can import drain master data')
         return redirect('/dashboard')
@@ -305,7 +298,6 @@ def import_excel():
                     """, (drain_id, ward, location, session['username']))
                     count += 1
 
-                # Auto-create ward users
                 cur.execute("SELECT DISTINCT ward FROM drains")
                 all_wards = [row[0] for row in cur.fetchall()]
                 for ward in all_wards:
@@ -334,12 +326,106 @@ def import_excel():
 
     return render_template('import_excel.html')
 
+# NEW: Delete single drain - Admin only
+@app.route('/delete_drain/<int:drain_id>', methods=['POST'])
+def delete_drain(drain_id):
+    if 'username' not in session or session.get('role')!= 'admin':
+        flash('Only admin can delete drains')
+        return redirect('/dashboard')
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    # Get drain info for confirmation message
+    cur.execute("SELECT drain_id, ward FROM drains WHERE id = %s", (drain_id,))
+    drain = cur.fetchone()
+
+    if drain:
+        cur.execute("DELETE FROM drains WHERE id = %s", (drain_id,))
+        conn.commit()
+        flash(f'Drain {drain[0]} from Ward {drain[1]} deleted successfully. All work logs also deleted.')
+    else:
+        flash('Drain not found')
+
+    cur.close()
+    conn.close()
+    return redirect('/dashboard')
+
+# NEW: Delete all drains in a ward - Admin only
+@app.route('/delete_ward_data/<ward>', methods=['POST'])
+def delete_ward_data(ward):
+    if 'username' not in session or session.get('role')!= 'admin':
+        flash('Only admin can delete ward data')
+        return redirect('/dashboard')
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    cur.execute("SELECT COUNT(*) FROM drains WHERE ward = %s", (ward,))
+    count = cur.fetchone()[0]
+
+    if count > 0:
+        cur.execute("DELETE FROM drains WHERE ward = %s", (ward,))
+        conn.commit()
+        flash(f'All {count} drains and work logs from Ward {ward} deleted successfully.')
+    else:
+        flash(f'No drains found in Ward {ward}')
+
+    cur.close()
+    conn.close()
+    return redirect('/dashboard')
+
+# NEW: Delete all work logs only - keeps drain master data
+@app.route('/delete_all_work_logs', methods=['POST'])
+def delete_all_work_logs():
+    if 'username' not in session or session.get('role')!= 'admin':
+        flash('Only admin can delete work logs')
+        return redirect('/dashboard')
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    cur.execute("SELECT COUNT(*) FROM drain_work_logs")
+    count = cur.fetchone()[0]
+
+    cur.execute("DELETE FROM drain_work_logs")
+
+    # Reset drain status to Pending
+    cur.execute("""
+        UPDATE drains SET status = 'Pending', work_type = NULL, work_date = NULL, updated_by = %s, updated_at = CURRENT_TIMESTAMP
+    """, (session['username'],))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+    flash(f'All {count} work logs deleted. Drain master data retained. All drain status reset to Pending.')
+    return redirect('/dashboard')
+
+# NEW: Clear entire database - Admin only - DANGER
+@app.route('/clear_all_data', methods=['POST'])
+def clear_all_data():
+    if 'username' not in session or session.get('role')!= 'admin':
+        flash('Only admin can clear all data')
+        return redirect('/dashboard')
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    # Delete in order due to foreign key
+    cur.execute("DELETE FROM drain_work_logs")
+    cur.execute("DELETE FROM drains")
+
+    conn.commit()
+    cur.close()
+    conn.close()
+    flash('All drain data and work logs deleted. Users retained. You can re-import Excel now.')
+    return redirect('/dashboard')
+
 @app.route('/work_report')
 def work_report():
     if 'username' not in session:
         return redirect('/login')
 
-    # Only admin can view full report
     if session.get('role')!= 'admin':
         flash('Access denied')
         return redirect('/dashboard')
@@ -391,25 +477,21 @@ def download_excel():
     cur.close()
     conn.close()
 
-    # Create Excel file
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Tanuku Drains Work Report"
 
     if data:
-        # Headers
         headers = list(data[0].keys())
         for col_num, header in enumerate(headers, 1):
             ws.cell(row=1, column=col_num, value=header)
 
-        # Data
         for row_num, row_data in enumerate(data, 2):
             for col_num, value in enumerate(row_data.values(), 1):
                 if isinstance(value, datetime):
                     value = value.strftime('%d-%m-%Y %I:%M %p')
                 ws.cell(row=row_num, column=col_num, value=value)
 
-        # Auto-adjust column widths
         for col in ws.columns:
             max_length = 0
             column = col[0].column_letter
@@ -422,7 +504,6 @@ def download_excel():
             adjusted_width = min(max_length + 2, 50)
             ws.column_dimensions[column].width = adjusted_width
 
-    # Save to BytesIO
     output = io.BytesIO()
     wb.save(output)
     output.seek(0)
