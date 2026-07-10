@@ -3,6 +3,7 @@
 <head>
     <title>Tanuku Drains Login</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
 </head>
 <body class="bg-light">
 <div class="container">
@@ -10,20 +11,23 @@
         <div class="col-md-4">
             <div class="card shadow">
                 <div class="card-header text-center bg-primary text-white">
-                    <h4>Tanuku Anti-Larva Spray</h4>
+                    <h4><i class="bi bi-droplet-fill"></i> Tanuku Anti-Larva Spray</h4>
+                    <small>Drain Monitoring System</small>
                 </div>
                 <div class="card-body">
                     {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
                     <form method="POST">
                         <div class="mb-3">
-                            <label class="form-label">Username</label>
-                            <input type="text" name="username" class="form-control" required>
+                            <label class="form-label"><i class="bi bi-person"></i> Username</label>
+                            <input type="text" name="username" class="form-control" required autofocus>
                         </div>
                         <div class="mb-3">
-                            <label class="form-label">Password</label>
+                            <label class="form-label"><i class="bi bi-lock"></i> Password</label>
                             <input type="password" name="password" class="form-control" required>
                         </div>
-                        <button type="submit" class="btn btn-primary w-100">Login</button>
+                        <button type="submit" class="btn btn-primary w-100">
+                            <i class="bi bi-box-arrow-in-right"></i> Login
+                        </button>
                     </form>
                 </div>
             </div>
