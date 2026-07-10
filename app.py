@@ -6,6 +6,7 @@ from flask import Flask, render_template, request, redirect, session, flash, url
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 import openpyxl
+import cloudinary
 import cloudinary.uploader
 
 app = Flask(__name__)
@@ -47,12 +48,25 @@ def init_db():
                 ward VARCHAR(10) NOT NULL,
                 location TEXT,
                 status VARCHAR(50) DEFAULT 'Pending',
-                photo_url TEXT,
                 work_type VARCHAR(100),
                 work_date DATE,
                 updated_by VARCHAR(50),
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(drain_id, ward)
+            )
+        ''')
+
+        # New table for multiple photos per drain
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS drain_photos (
+                id SERIAL PRIMARY KEY,
+                drain_id INTEGER REFERENCES drains(id) ON DELETE CASCADE,
+                photo_url TEXT NOT NULL,
+                work_type VARCHAR(100),
+                status VARCHAR(50),
+                uploaded_by VARCHAR(50),
+                uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                remarks TEXT
             )
         ''')
 
@@ -125,9 +139,22 @@ def dashboard():
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     if session.get('role') == 'admin':
-        cur.execute("SELECT * FROM drains ORDER BY ward, drain_id")
+        cur.execute("""
+            SELECT d.*,
+                   (SELECT photo_url FROM drain_photos WHERE drain_id = d.id ORDER BY uploaded_at DESC LIMIT 1) as latest_photo,
+                   (SELECT COUNT(*) FROM drain_photos WHERE drain_id = d.id) as photo_count
+            FROM drains d
+            ORDER BY ward, drain_id
+        """)
     else:
-        cur.execute("SELECT * FROM drains WHERE ward = %s ORDER BY drain_id", (session.get('ward'),))
+        cur.execute("""
+            SELECT d.*,
+                   (SELECT photo_url FROM drain_photos WHERE drain_id = d.id ORDER BY uploaded_at DESC LIMIT 1) as latest_photo,
+                   (SELECT COUNT(*) FROM drain_photos WHERE drain_id = d.id) as photo_count
+            FROM drains d
+            WHERE ward = %s
+            ORDER BY drain_id
+        """, (session.get('ward'),))
 
     drains = cur.fetchall()
     cur.close()
@@ -146,16 +173,27 @@ def upload_work(drain_id):
     cur.execute("SELECT * FROM drains WHERE id = %s", (drain_id,))
     drain = cur.fetchone()
 
+    if not drain:
+        flash('Drain not found')
+        cur.close()
+        conn.close()
+        return redirect('/dashboard')
+
     if session.get('role')!= 'admin' and drain['ward']!= session.get('ward'):
         flash('You do not have access to this drain')
         cur.close()
         conn.close()
         return redirect('/dashboard')
 
+    # Get photo history for this drain
+    cur.execute("SELECT * FROM drain_photos WHERE drain_id = %s ORDER BY uploaded_at DESC", (drain_id,))
+    photo_history = cur.fetchall()
+
     if request.method == 'POST':
         work_type = request.form.get('work_type')
         status = request.form.get('status')
-        photo_url = drain['photo_url']
+        remarks = request.form.get('remarks', '')
+        photo_url = None
 
         if 'photo' in request.files:
             photo = request.files['photo']
@@ -169,12 +207,20 @@ def upload_work(drain_id):
                     conn.close()
                     return redirect(url_for('upload_work', drain_id=drain_id))
 
+        # Update drains table
         cur.execute("""
             UPDATE drains
-            SET status = %s, photo_url = %s, work_type = %s, work_date = CURRENT_DATE,
+            SET status = %s, work_type = %s, work_date = CURRENT_DATE,
                 updated_by = %s, updated_at = CURRENT_TIMESTAMP
             WHERE id = %s
-        """, (status, photo_url, work_type, session['username'], drain_id))
+        """, (status, work_type, session['username'], drain_id))
+
+        # Insert photo record if uploaded
+        if photo_url:
+            cur.execute("""
+                INSERT INTO drain_photos (drain_id, photo_url, work_type, status, uploaded_by, remarks)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (drain_id, photo_url, work_type, status, session['username'], remarks))
 
         conn.commit()
         cur.close()
@@ -184,15 +230,17 @@ def upload_work(drain_id):
 
     cur.close()
     conn.close()
-    return render_template('upload_work.html', drain=drain)
+    return render_template('upload_work.html', drain=drain, photo_history=photo_history)
 
 @app.route('/import_excel', methods=['GET', 'POST'])
 def import_excel():
     if 'username' not in session:
         return redirect('/login')
 
-    user_role = session.get('role')
-    user_ward = session.get('ward')
+    # Only admin can upload drain master data now
+    if session.get('role')!= 'admin':
+        flash('Only admin can import drain data')
+        return redirect('/dashboard')
 
     if request.method == 'POST':
         if 'file' not in request.files:
@@ -224,41 +272,34 @@ def import_excel():
                         skipped += 1
                         continue
 
-                    if user_role!= 'admin' and ward!= user_ward:
-                        skipped += 1
-                        continue
-
                     cur.execute("""
                         INSERT INTO drains (drain_id, ward, location, status, updated_by)
                         VALUES (%s, %s, %s, 'Pending', %s)
-                        ON CONFLICT (drain_id, ward) 
+                        ON CONFLICT (drain_id, ward)
                         DO UPDATE SET location = EXCLUDED.location, updated_by = EXCLUDED.updated_by, updated_at = CURRENT_TIMESTAMP
                     """, (drain_id, ward, location, session['username']))
                     count += 1
 
-                if user_role == 'admin':
-                    cur.execute("SELECT DISTINCT ward FROM drains")
-                    all_wards = [row[0] for row in cur.fetchall()]
-                    for ward in all_wards:
-                        if ward:
-                            username = f'sanitation{ward}'
-                            password = f'Sanitation{ward}@2026'
-                            cur.execute("""
-                                INSERT INTO users (username, password_hash, role, ward)
-                                VALUES (%s, %s, %s, %s)
-                                ON CONFLICT (username) DO NOTHING
-                            """, (username, generate_password_hash(password), 'user', ward))
+                # Auto-create ward users if not exists
+                cur.execute("SELECT DISTINCT ward FROM drains")
+                all_wards = [row[0] for row in cur.fetchall()]
+                for ward in all_wards:
+                    if ward:
+                        username = f'sanitation{ward}'
+                        password = f'Sanitation{ward}@2026'
+                        cur.execute("""
+                            INSERT INTO users (username, password_hash, role, ward)
+                            VALUES (%s, %s, %s, %s)
+                            ON CONFLICT (username) DO NOTHING
+                        """, (username, generate_password_hash(password), 'user', ward))
 
                 conn.commit()
                 cur.close()
                 conn.close()
-                
-                if user_role == 'admin':
-                    flash(f'Successfully imported {count} drains. Skipped {skipped} rows.')
-                else:
-                    flash(f'Successfully imported {count} drains for Ward {user_ward}. Skipped {skipped} rows.')
+
+                flash(f'Successfully imported {count} drains. Skipped {skipped} rows. Data reflected in ward logins.')
                 return redirect('/dashboard')
-                
+
             except Exception as e:
                 flash(f'Error importing Excel: {str(e)}')
                 return redirect('/import_excel')
@@ -278,22 +319,25 @@ def photo_report():
 
     if session.get('role') == 'admin':
         cur.execute("""
-            SELECT * FROM drains
-            WHERE photo_url IS NOT NULL AND photo_url!= ''
-            ORDER BY ward, work_date DESC
+            SELECT dp.*, d.drain_id, d.ward, d.location
+            FROM drain_photos dp
+            JOIN drains d ON dp.drain_id = d.id
+            ORDER BY d.ward, dp.uploaded_at DESC
         """)
     else:
         cur.execute("""
-            SELECT * FROM drains
-            WHERE ward = %s AND photo_url IS NOT NULL AND photo_url!= ''
-            ORDER BY work_date DESC
+            SELECT dp.*, d.drain_id, d.ward, d.location
+            FROM drain_photos dp
+            JOIN drains d ON dp.drain_id = d.id
+            WHERE d.ward = %s
+            ORDER BY dp.uploaded_at DESC
         """, (session.get('ward'),))
 
-    drains = cur.fetchall()
+    photos = cur.fetchall()
     cur.close()
     conn.close()
 
-    return render_template('photo_report.html', drains=drains)
+    return render_template('photo_report.html', photos=photos)
 
 @app.route('/logout')
 def logout():
