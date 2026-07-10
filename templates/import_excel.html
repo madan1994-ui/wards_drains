@@ -1,44 +1,83 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Import Drain Data</title>
+    <title>Import Drain Master Data</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
 </head>
 <body class="bg-light">
 <div class="container mt-4">
     <div class="row justify-content-center">
-        <div class="col-md-6">
-            <div class="card">
-                <div class="card-header">
-                    <h5>Import Drain Master Data - Admin Only</h5>
+        <div class="col-md-7">
+            <div class="card shadow">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0"><i class="bi bi-database-add"></i> Import Drain Master Data - Admin Only</h5>
                 </div>
                 <div class="card-body">
                     {% with messages = get_flashed_messages() %}
                       {% if messages %}
                         {% for message in messages %}
-                          <div class="alert alert-info">{{ message }}</div>
+                          <div class="alert alert-info alert-dismissible fade show">{{ message }}
+                            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                          </div>
                         {% endfor %}
                       {% endif %}
                     {% endwith %}
 
+                    <div class="alert alert-warning">
+                        <i class="bi bi-exclamation-triangle"></i> <strong>Admin Only:</strong> This uploads drain master data. 
+                        Wards will see their drains automatically after import.
+                    </div>
+
                     <form method="POST" enctype="multipart/form-data">
                         <div class="mb-3">
-                            <label class="form-label">Upload Excel File (.xlsx)</label>
+                            <label class="form-label">Upload Excel File (.xlsx) <span class="text-danger">*</span></label>
                             <input type="file" name="file" class="form-control" accept=".xlsx" required>
                         </div>
-                        <div class="alert alert-secondary">
-                            <strong>Excel Format:</strong><br>
-                            Row 1: Headers<br>
-                            Column A: Sl.No | Column B: Ward | Column C: Drain ID | Column D: Location<br>
-                            <small>Data will reflect in respective ward logins automatically</small>
+                        
+                        <div class="card bg-light mb-3">
+                            <div class="card-body">
+                                <h6><i class="bi bi-file-earmark-excel"></i> Required Excel Format:</h6>
+                                <table class="table table-sm table-bordered mb-0">
+                                    <thead class="table-secondary">
+                                        <tr>
+                                            <th>Column A</th>
+                                            <th>Column B</th>
+                                            <th>Column C</th>
+                                            <th>Column D</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td>Sl.No</td>
+                                            <td><strong>Ward</strong></td>
+                                            <td><strong>Drain ID</strong></td>
+                                            <td><strong>Location</strong></td>
+                                        </tr>
+                                        <tr class="table-light">
+                                            <td>1</td>
+                                            <td>11</td>
+                                            <td>D001</td>
+                                            <td>Main Road</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                                <small class="text-muted mt-2 d-block">
+                                    Row 1: Headers. Start data from Row 2. Ward & Drain ID are mandatory.
+                                </small>
+                            </div>
                         </div>
-                        <button type="submit" class="btn btn-success">Upload & Import</button>
-                        <a href="/dashboard" class="btn btn-secondary">Cancel</a>
+
+                        <button type="submit" class="btn btn-success w-100">
+                            <i class="bi bi-upload"></i> Upload & Import Data
+                        </button>
+                        <a href="/dashboard" class="btn btn-secondary w-100 mt-2">Cancel</a>
                     </form>
                 </div>
             </div>
         </div>
     </div>
 </div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
