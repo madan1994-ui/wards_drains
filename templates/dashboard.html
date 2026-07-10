@@ -1,97 +1,14 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Tanuku Drains Dashboard</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
-</head>
-<body class="bg-light">
-<div class="container mt-4">
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <h3>Tanuku Anti-Larva Spray Dashboard</h3>
-        <div>
-            <span class="badge bg-primary me-2">
-                <i class="bi bi-person"></i> {{ session.username }} | {{ session.role }} {% if session.ward %}Ward {{ session.ward }}{% endif %}
-            </span>
-            {% if session.role == 'admin' %}
-            <a href="/import_excel" class="btn btn-success btn-sm"><i class="bi bi-upload"></i> Import Excel</a>
-            <a href="/work_report" class="btn btn-info btn-sm"><i class="bi bi-file-text"></i> Work Report</a>
-            <a href="/download_excel" class="btn btn-warning btn-sm"><i class="bi bi-download"></i> Download Excel</a>
-            {% endif %}
-            <a href="/logout" class="btn btn-danger btn-sm"><i class="bi bi-box-arrow-right"></i> Logout</a>
-        </div>
-    </div>
-
-    {% with messages = get_flashed_messages() %}
-      {% if messages %}
-        {% for message in messages %}
-          <div class="alert alert-info alert-dismissible fade show">{{ message }}
-            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-          </div>
-        {% endfor %}
-      {% endif %}
-    {% endwith %}
-
-    <div class="card shadow-sm">
-        <div class="card-body">
-            <table class="table table-hover table-sm">
-                <thead class="table-dark">
-                    <tr>
-                        <th>Ward</th>
-                        <th>Drain ID</th>
-                        <th>Location</th>
-                        <th>Status</th>
-                        <th>Work Type</th>
-                        <th>Last Work Date</th>
-                        <th>Work Count</th>
-                        <th>Action</th>
-                    </tr>
-                </thead>
-                <tbody>
-                {% for drain in drains %}
-                    <tr>
-                        <td><span class="badge bg-secondary">{{ drain.ward }}</span></td>
-                        <td><strong>{{ drain.drain_id }}</strong></td>
-                        <td>{{ drain.location }}</td>
-                        <td>
-                            <span class="badge {% if drain.status == 'Completed' %}bg-success{% elif drain.status == 'In Progress' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
-                                {{ drain.status }}
-                            </span>
-                        </td>
-                        <td>{{ drain.work_type or '-' }}</td>
-                        <td>
-                            {% if drain.last_work_date %}
-                                {{ drain.last_work_date.strftime('%d-%m-%Y') }}
-                            {% else %}
-                                -
-                            {% endif %}
-                        </td>
-                        <td><span class="badge bg-info">{{ drain.work_count }}</span></td>
-                        <td>
-                            {% if session.role != 'admin' %}
-                            <a href="/upload_work/{{ drain.id }}" class="btn btn-primary btn-sm">
-                                <i class="bi bi-camera"></i> Upload Work
-                            </a>
-                            {% else %}
-                            <span class="text-muted">View Only</span>
-                            {% endif %}
-                        </td>
-                    </tr>
-                {% endfor %}
-                </tbody>
-            </table>
-            {% if not drains %}
-            <p class="text-center text-muted py-4">
-                {% if session.role == 'admin' %}
-                No drains found. Click "Import Excel" to add drain master data.
-                {% else %}
-                No drains assigned to Ward {{ session.ward }} yet. Contact admin.
-                {% endif %}
-            </p>
-            {% endif %}
-        </div>
-    </div>
-</div>
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-</body>
-</html>
+<td>
+    {% if session.role!= 'admin' %}
+    <a href="/upload_work/{{ drain.id }}" class="btn btn-primary btn-sm">
+        <i class="bi bi-camera"></i> Upload Work
+    </a>
+    {% else %}
+    <form method="POST" action="/delete_drain/{{ drain.id }}" style="display:inline;"
+          onsubmit="return confirm('Delete drain {{ drain.drain_id }} Ward {{ drain.ward }}? This will delete all work logs too!');">
+        <button type="submit" class="btn btn-danger btn-sm">
+            <i class="bi bi-trash"></i> Delete
+        </button>
+    </form>
+    {% endif %}
+</td>
