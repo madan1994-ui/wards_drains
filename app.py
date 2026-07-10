@@ -53,10 +53,22 @@ def init_db():
                 work_type VARCHAR(100),
                 work_date DATE,
                 updated_by VARCHAR(50),
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(drain_id, ward)
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+
+        # Add unique constraint if it doesn't exist - fixes the ON CONFLICT error
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'drains_drain_id_ward_key'
+                ) THEN
+                    ALTER TABLE drains ADD CONSTRAINT drains_drain_id_ward_key UNIQUE (drain_id, ward);
+                END IF;
+            END $$;
+        """)
 
         # Table for ward work uploads with photos
         cur.execute('''
@@ -277,9 +289,9 @@ def import_excel():
                 count = 0
                 skipped = 0
                 for row in sheet.iter_rows(min_row=2, values_only=True):
-                    drain_id = str(row[2]) if row[2] else ''
-                    ward = str(row[1]) if row[1] else ''
-                    location = str(row[3]) if row[3] else ''
+                    drain_id = str(row[2]) if len(row) > 2 and row[2] else ''
+                    ward = str(row[1]) if len(row) > 1 and row[1] else ''
+                    location = str(row[3]) if len(row) > 3 and row[3] else ''
 
                     if not drain_id or not ward:
                         skipped += 1
@@ -310,7 +322,7 @@ def import_excel():
                 cur.close()
                 conn.close()
 
-                flash(f'Successfully imported {count} drains. Data reflected in ward logins.')
+                flash(f'Successfully imported {count} drains. Skipped {skipped} rows. Data reflected in ward logins.')
                 return redirect('/dashboard')
 
             except Exception as e:
